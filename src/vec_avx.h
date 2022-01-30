@@ -618,7 +618,7 @@ static inline void sgemv_accum16(float *out, const float *weights, int rows, int
    int i, j;
    for (i=0;i<rows;i+=16)
    {
-      float * restrict y;
+      float * y;
       __m256 vy0, vy8;
       y = &out[i];
       vy0 = _mm256_loadu_ps(&y[0]);
@@ -644,7 +644,7 @@ static inline void sparse_sgemv_accum16(float *out, const float *weights, int ro
    int i, j;
    for (i=0;i<rows;i+=16)
    {
-      float * restrict y;
+      float *  y;
       int cols;
       __m256 vy0, vy8;
       y = &out[i];
@@ -763,7 +763,7 @@ static inline void sgemv_accum8x4(float *out, const qweight *w, int rows, int co
    {
       for (j=0;j<cols;j+=4)
       {
-         float * restrict y;
+         float *  y;
          float xj0, xj1, xj2, xj3;
          xj0 = x[j+0];
          xj1 = x[j+1];
@@ -785,14 +785,133 @@ static inline void sgemv_accum8x4(float *out, const qweight *w, int rows, int co
 }
 #endif
 
-static inline void sparse_sgemv_accum8x4(float *_out, const qweight *w, int rows, int cols, const int *idx, const float *_x)
+#define AMX_USE 
+
+#ifdef AMX_USE
+
+#define SIZE 128 
+#define AMX_M 8
+#define AMX_N 1
+#define AMX_K 16
+#define AMX_K4 4
+
+#include "gemm_amx.h"
+#include<stdio.h>
+
+static int gA[AMX_M][AMX_K], gB[AMX_K][AMX_N], gC[AMX_M][AMX_N], gD[AMX_M][AMX_N];
+static int gA1[AMX_M][AMX_K4], gB1[AMX_K4][AMX_N], gC1[AMX_M][AMX_N], gD1[AMX_M][AMX_N];
+
+#endif
+
+static int cnter=0;
+
+#define INTEL_DEBUG
+
+static inline void save_fp32_to_file(char *filename, float *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    FILE *fp = fopen(filename, "w");
+    fprintf(fp, "int %s_size = %d;\n", filename, size);
+    fprintf(fp, "float %s[] = {", filename);
+    for(int i=0;i< size;i++){
+        fprintf(fp, "%f, ", out[i]);
+        if((i+1) % 10 ==0) fprintf(fp, "\n");
+    }
+    fprintf(fp, "\n};");
+    fclose(fp);
+}
+
+static inline void save_u8_to_file(char *filename, unsigned char *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    FILE *fp = fopen(filename, "w");
+    fprintf(fp, "int %s_size = %d;\n", filename, size);
+    fprintf(fp, "unsigned char %s[] = {", filename);
+    for(int i=0;i< size;i++){
+        fprintf(fp, "%d, ", out[i]);
+        if((i+1) % 10 ==0) fprintf(fp, "\n");
+    }
+    fprintf(fp, "\n};");
+    fclose(fp);
+}
+
+static inline void save_s8_to_file(char *filename, char *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    FILE *fp = fopen(filename, "w");
+    fprintf(fp, "int %s_size = %d;\n", filename, size);
+    fprintf(fp, "char %s[] = {", filename);
+    for(int i=0;i< size;i++){
+        fprintf(fp, "%d, ", out[i]);
+        if((i+1) % 10 ==0) fprintf(fp, "\n");
+    }
+    fprintf(fp, "\n};");
+    fclose(fp);
+}
+
+static inline void p_s8(const char *filename, const signed char *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    printf("%s size=%d\n", filename, size);
+    
+    for(int i=0;i< size;i++){
+        printf("%d ", out[i]);
+        if((i+1) % 10 ==0) printf("\n");
+    }
+    printf("\n");    
+}
+
+static inline void p_u8(const char *filename, const unsigned char *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    printf("%s size=%d\n", filename, size);
+    
+    for(int i=0;i< size;i++){
+        printf("%d ", out[i]);
+        if((i+1) % 10 ==0) printf("\n");
+    }
+    printf("\n");    
+}
+
+static inline void p_fp32(const char *filename, const float *out, int size){
+    #ifndef INTEL_DEBUG
+    return;
+    #endif
+    printf("%s size=%d\n", filename, size);
+    
+    for(int i=0;i< size;i++){
+        printf("%f ", out[i]);
+        if((i+1) % 10 ==0) printf("\n");
+    }
+    printf("\n");    
+}
+
+#define ALLOW_PRINT if(cnter >= 105600)
+//#define ALLOW_PRINT if(0)
+#define NOT_PRINT if(0)
+    
+
+static inline void sparse_sgemv_accum8x4_avx2(float *_out, const qweight *w, int rows, int cols, const int *idx, const float *_x)
 {
+    printf("rows=%d, cols=%d\n", rows, cols);
+    
    __m256i ones;
    int i, j;
    unsigned char x[MAX_INPUTS];
    ones = _mm256_set1_epi16(1);
    //for (i=0;i<cols;i++) x[i] = 127+floor(.5+127*_x[i]);
    vector_ps_to_epi8(x, _x, cols);
+   
+   save_fp32_to_file("avx2/out0.h", _out, rows);
+   save_fp32_to_file("avx2/x0_fp32.h", _x, cols);
+   save_u8_to_file("avx2/x0.h", x, cols);
+   save_s8_to_file("avx2/w0.h", w, 44224);
+   
    for (i=0;i<rows;i+=8)
    {
       int colblocks;
@@ -852,9 +971,485 @@ static inline void sparse_sgemv_accum8x4(float *_out, const qweight *w, int rows
       vout = _mm256_cvtepi32_ps(vy0);
       vout = _mm256_mul_ps(vout, _mm256_set1_ps(SCALE_1));
       _mm256_storeu_ps(&_out[i], vout);
+      char tmp[1024];
+      //sprintf(tmp, "avx2/out01_%d.h", i);
+      //printf("tmp %s\n", tmp);
+      //save_fp32_to_file(tmp, _out, rows);
    }
+   save_fp32_to_file("avx2/out1.h", _out, rows);
+   
 }
 
+static inline void sparse_sgemv_accum8x4_c(float *out, const qweight *w, int rows, int cols, const int *idx, const float *_x)
+{
+    //int gA[AMX_M][AMX_K], gB[AMX_K][AMX_N], gC[AMX_M][AMX_N], gD[AMX_M][AMX_N];
+    
+   printf("rows=%d, cols=%d\n", rows, cols);
+   int i, j;
+   unsigned char x[MAX_INPUTS];
+   save_fp32_to_file("c/out0.h", out, rows);
+   for (i=0;i<rows;i++) out[i] *= SCALE;
+   for (i=0;i<cols;i++) x[i] = 127+floor(.5+127*_x[i]);
+   int cnt=0;
+   save_fp32_to_file("c/x0_fp32.h", _x, cols);
+   save_u8_to_file("c/x0.h", x, cols);
+   save_s8_to_file("c/w0.h", w, 44224);
+   
+   for (i=0;i<rows;i+=8)
+   {
+      int colblocks;
+      colblocks = *idx++;
+      //printf("colblocks=%d\n", colblocks);
+      j=0;
+      for (;j<colblocks-3;j+=4)
+      {
+         int pos;
+         float * y;
+         int xj0, xj1, xj2, xj3;
+         pos = (*idx++);
+         ALLOW_PRINT printf("i=%d, pos=%d\n", i, pos);
+         
+         //gA
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         ALLOW_PRINT {
+             p_fp32("y0", y, 8);             
+         }
+         
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         w += 32;
+         cnt += 32;
+         
+         pos = (*idx++);
+         ALLOW_PRINT printf("i=%d, pos=%d\n", i, pos);
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         w += 32;
+         cnt += 32;
+         
+         pos = (*idx++);
+         ALLOW_PRINT printf("i=%d, pos=%d\n", i, pos);
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         w += 32;
+         cnt += 32;
+         
+         pos = (*idx++);
+         ALLOW_PRINT printf("i=%d, pos=%d\n", i, pos);
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         w += 32;
+         cnt += 32;
+         
+         ALLOW_PRINT {
+             p_fp32("y1", y, 8);             
+         }
+         
+      }
+      for (;j<colblocks;j++)
+      {
+         //printf("handle rest j = %d\n", j);
+         int pos;
+         float * y;
+         int xj0, xj1, xj2, xj3;
+         pos = (*idx++);
+         ALLOW_PRINT printf("i=%d, pos=%d\n", i, pos);
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         ALLOW_PRINT {
+             p_fp32("y0_j", y, 8);    
+             p_u8("x0_j",x+pos, 4);
+             p_s8("w0_j",w, 32);
+         }
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         w += 32;
+         cnt += 32;
+         ALLOW_PRINT {
+             p_fp32("y1_j", y, 8);             
+         }
+      }
+      char tmp[1024];
+      sprintf(tmp, "c/out01_%d.h", i);
+      //printf("tmp %s\n", tmp);
+      //save_fp32_to_file(tmp, out, rows);
+      
+   }
+   //printf("w size=%d\n", cnt);
+   
+   for (i=0;i<rows;i++) out[i] *= SCALE_1;
+   //p_fp32("out1", out, rows);
+   save_fp32_to_file("c/out1.h", out, rows);
+}
+
+
+#define INTEL_OPT1
+
+static inline void sparse_sgemv_accum8x4_amx(float *out, const qweight *w, int rows, int cols, const int *idx, const float *_x)
+{
+    //int gA[AMX_M][AMX_K], gB[AMX_K][AMX_N], gC[AMX_M][AMX_N], gD[AMX_M][AMX_N];
+   //printf("rows=%d, cols=%d\n", rows, cols);
+   //rows=1152, cols=384
+   int i, j;
+   unsigned char x[MAX_INPUTS];
+   //save_fp32_to_file("amx/out0.h", out, rows);
+   
+    #ifdef INTEL_OPT 
+      __m256i vy0; //8*int32
+      __m256 vout; //8*float32     
+    #else
+    for (i=0;i<rows;i++) out[i] *= SCALE;
+    #endif  
+   /*
+   32510 ms
+   32414 ms
+   */
+      
+   #ifdef INTEL_OPT
+   vector_ps_to_epi8(x, _x, cols);
+   #else
+   //for (i=0;i<cols;i++) x[i] = 127+floor(.5+127*_x[i]);
+   vector_ps_to_epi8(x, _x, cols); 
+   #endif
+   
+   int cnt=0;
+   
+   //save_fp32_to_file("amx/out0_scale.h", out, rows);
+   
+   //save_fp32_to_file("amx/x0_fp32.h", _x, cols);
+   //save_u8_to_file("amx/x0.h", x, cols);
+   //save_s8_to_file("amx/w0.h", w, 44224);
+   for (i=0;i<rows;i+=8)
+   {
+      //printf("i %d\n", i);
+      int colblocks;
+      colblocks = *idx++;
+      NOT_PRINT printf("colblocks=%d\n", colblocks);
+      j=0;
+      float * y;
+      
+      #ifdef INTEL_OPT 
+         vout = _mm256_loadu_ps(&out[i]);
+         vout = _mm256_mul_ps(vout, _mm256_set1_ps(SCALE));
+         vy0 = _mm256_cvtps_epi32(vout);       
+         _mm256_store_epi32(gC, vy0);
+      #else   
+          y=&out[i];
+          for(int k=0;k<8;k++){             
+             gC[k][0]=y[k];             
+          }
+      #endif
+      
+      for (;j<colblocks-3;j+=4)
+      {
+         int pos;
+    
+         ALLOW_PRINT {
+             p_fp32("y0", y, 8);             
+         }
+         
+         /*
+         reorder base
+         for(int k=0;k<4;k++){
+            for(int m=0;m<8;m++){
+                for(int n=0;n<4;n++){
+                        gA[m][k*4+n]=w[n+m*4+k*32];                 
+                }
+            }
+            cnt += 32;
+         }
+         */
+         //memcpy(gA, w, 4*8*4*sizeof(int))
+         for(int k=0;k<8;k++){
+            for(int m=0;m<16;m++){
+                gA[k][m]=w[k*16+m];
+                //ALLOW_PRINT printf("%d ", w[])
+            }
+            cnt += 32;
+         }
+         
+         for(int k=0;k<4;k++){
+             pos = (*idx++);
+             NOT_PRINT printf("i=%d, pos=%d\n", i, pos);
+             for(int m=0;m<4;m++){
+                 gB[m+k*4][0]=x[pos+m];                 
+             }
+         }
+         
+        
+         /*
+         for(int k=0;k<8;k++){             
+             gC[k][0]=y[k];             
+         }
+         */        
+        
+        //ALLOW_PRINT { 
+        NOT_PRINT {       
+            printf("gA\n");
+            for(int d=0;d<8;d++){
+                for(int e=0;e<16;e++){
+                 printf("%d ", gA[d][e]);
+                }
+                printf("\n");
+            }
+            printf("gB\n");
+            for(int d=0;d<16;d++){            
+                printf("%d ", gB[d][0]);            
+            } 
+            printf("\n");
+             
+            printf("gC\n");
+            for(int d=0;d<8;d++){            
+                printf("%d ", gC[d][0]);            
+            } 
+            printf("\n");
+        }
+        //inner_product_ref((int *)gA, (int *)gB, (int *)gC, AMX_M, AMX_N, AMX_K);
+        inner_product((int *)gA, (int *)gB, (int *)gC, AMX_M, AMX_N, AMX_K);
+        
+        
+        /*
+        for(int k=0;k<8;k++){             
+            y[k]=(float)gC[k][0]; 
+        }
+        */
+        
+        
+        ALLOW_PRINT {    
+            /*
+            printf("gC_1\n");
+            for(int d=0;d<8;d++){            
+                printf("%d ", gC[d][0]);            
+            } 
+            */
+            printf("\n");        
+             {
+                 p_fp32("y1", y, 8);             
+             }
+        }
+        w+=128;
+      }
+      
+      //p_fp32("out01", out, rows);
+      
+      
+      for (;j<colblocks;j++)
+      {
+         //printf("handle rest j=%d colblocks=%d\n", j, colblocks);
+         ALLOW_PRINT printf("handle rest j = %d i =%d\n", j, i);
+         int pos;
+         //float * y=&out[i];  
+         
+                 
+         ALLOW_PRINT {
+             p_fp32("y0_j", y, 8);             
+         }
+         
+         pos = (*idx++);
+         NOT_PRINT printf("i=%d, pos=%d\n", i, pos);
+         /*
+         xj0 = x[pos+0];
+         xj1 = x[pos+1];
+         xj2 = x[pos+2];
+         xj3 = x[pos+3];
+         y = &out[i];
+         y[0] += (w[0]*xj0+w[1]*xj1+w[2]*xj2+w[3]*xj3);
+         y[1] += (w[4]*xj0+w[5]*xj1+w[6]*xj2+w[7]*xj3);
+         y[2] += (w[8]*xj0+w[9]*xj1+w[10]*xj2+w[11]*xj3);
+         y[3] += (w[12]*xj0+w[13]*xj1+w[14]*xj2+w[15]*xj3);
+         y[4] += (w[16]*xj0+w[17]*xj1+w[18]*xj2+w[19]*xj3);
+         y[5] += (w[20]*xj0+w[21]*xj1+w[22]*xj2+w[23]*xj3);
+         y[6] += (w[24]*xj0+w[25]*xj1+w[26]*xj2+w[27]*xj3);
+         y[7] += (w[28]*xj0+w[29]*xj1+w[30]*xj2+w[31]*xj3);
+         */
+         
+         for(int k=0;k<1;k++){
+            for(int m=0;m<8;m++){
+                for(int n=0;n<4;n++){
+                        gA1[m][k*4+n]=w[n+m*4+k*32];                 
+                }
+            }
+            cnt += 32;
+         }
+         
+         for(int k=0;k<1;k++){
+             //pos = (*idx++);
+             //printf("pos=%d\n", pos);
+             for(int m=0;m<4;m++){
+                 gB1[m+k*4][0]=x[pos+m]; 
+                 //printf("gB1 x[pos+m]=%d %d\n", x[pos+m], pos+m);
+             }
+         }
+         
+        
+         /*    
+         for(int k=0;k<8;k++){             
+             gC[k][0]=y[k];             
+         }
+         */
+        
+         
+         
+        //ALLOW_PRINT {
+        NOT_PRINT {
+            printf("gA1\n");
+            for(int d=0;d<8;d++){
+                for(int e=0;e<4;e++){
+                 printf("%d ", gA1[d][e]);
+                }
+                printf("\n");
+            }
+            printf("gB1\n");
+            for(int d=0;d<4;d++){            
+                printf("%d ", gB1[d][0]);            
+            } 
+            printf("\n");
+             
+            printf("gC\n");
+            for(int d=0;d<8;d++){            
+                printf("%d ", gC[d][0]);            
+            } 
+            printf("\n");
+        }
+        
+        inner_product((int *)gA1, (int *)gB1, (int *)gC, AMX_M, AMX_N, AMX_K4);
+        //inner_product_ref((int *)gA1, (int *)gB1, (int *)gC, AMX_M, AMX_N, AMX_K4);
+        
+        
+/*            
+        for(int k=0;k<8;k++){             
+            y[k]=(float)gC[k][0]; 
+        }         
+*/
+       
+        
+        w += 32;
+        
+        ALLOW_PRINT {
+            p_fp32("y2_j", y, 8);            
+        }        
+      }      
+        
+      #ifdef INTEL_OPT       
+      vy0 = _mm256_load_epi32(gC);      
+      vout = _mm256_cvtepi32_ps(vy0);
+      vout = _mm256_mul_ps(vout, _mm256_set1_ps(SCALE_1));
+      _mm256_storeu_ps(&out[i], vout);
+      #else
+      for(int k=0;k<8;k++){             
+            y[k]=(float)gC[k][0]; 
+      }    
+      #endif
+      char tmp[1024];
+      //sprintf(tmp, "amx/out01_%d.h", i);
+      //printf("tmp %s\n", tmp);
+      //save_fp32_to_file(tmp, out, rows);
+   }
+   //ALLOW_PRINT printf("w size=%d\n", cnt);
+   
+   
+   //#ifndef INTEL_OPT     
+   for (i=0;i<rows;i++) out[i] *= SCALE_1;
+   //#endif
+   ALLOW_PRINT p_fp32("out", out, 8);
+   //save_fp32_to_file("amx/out1.h", out, rows);
+}
+
+
+#define COMPARE_BASE
+
+#ifdef COMPARE_BASE
+
+static int compare_out(float *out, int rows){    
+#include <math.h>
+#include "out_first.h" 
+
+    for(int i=0;i<rows;i++){
+        if (fabs(amx_out1_h[i]-out[i])>0.0001){
+            printf("diff %d current %f - expected %f\n", i, out[i], amx_out1_h[i]);
+            return 1;
+        }
+        
+    }
+    return 0;
+}
+
+#endif
+
+static inline void sparse_sgemv_accum8x4(float *out, const qweight *w, int rows, int cols, const int *idx, const float *_x){    
+  cnter++;
+   if (cnter < 0 ){
+        //#ifdef INTEL_DEBUG
+        return;
+        //#endif       
+   }
+    //printf("avx2\n"); sparse_sgemv_accum8x4_avx2(out, w, rows, cols, idx, _x);
+    //printf("amx cnter = %d\n", cnter); 
+    sparse_sgemv_accum8x4_amx(out, w, rows, cols, idx, _x);
+    //printf("c\n");sparse_sgemv_accum8x4_c(out, w, rows, cols, idx, _x);
+    
+    #ifdef COMPARE_BASE1
+        #ifdef INTEL_DEBUG
+        if (cnt ==1){
+            int res = compare_out(out, rows);
+            if (res==0) printf("-----------------result is passed\n");
+            else printf("-----------------result is wrong\n");
+        }
+        #endif 
+    #endif
+}
 
 #else /*DOT_PROD*/
 typedef float qweight;
@@ -862,11 +1457,12 @@ typedef float qweight;
 
 static inline void sparse_sgemv_accum8x4(float *out, const qweight *weights, int rows, int ignore, const int *idx, const float *x)
 {
+   printf("rows=%d, cols=%d\n", rows, cols);
    int i, j;
    (void)ignore;
    for (i=0;i<rows;i+=8)
    {
-      float * restrict y;
+      float *  y;
       int cols;
       __m256 vy0;
       y = &out[i];

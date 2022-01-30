@@ -81,6 +81,8 @@ def printSparseVector(f, A, name, have_diag=True):
         pos = idx.shape[0]
         idx = np.append(idx, -1)
         nb_nonzero = 0
+        res=[]
+        cnt = 0
         for j in range(N//4):
             block = A[j*4:(j+1)*4, i*8:(i+1)*8]
             qblock = AQ[j*4:(j+1)*4, i*8:(i+1)*8]
@@ -89,8 +91,37 @@ def printSparseVector(f, A, name, have_diag=True):
                 idx = np.append(idx, j*4)
                 vblock = qblock.transpose((1,0)).reshape((-1,))
                 W0 = np.concatenate([W0, block.reshape((-1,))])
-                W = np.concatenate([W, vblock])
+                #W = np.concatenate([W, vblock])
+                
+                res.extend(vblock)
+                
+                if len(res)==4*32:
+                    #print("nb_nonzero1", nb_nonzero)
+                    reorder= np.zeros((8, 16), dtype=int)
+                    for k1 in range(4):
+                        for m1 in range(8):
+                            for n1 in range(4):
+                                reorder[m1][k1*4+n1]=res[n1+m1*4+k1*32];
+                    #print(reorder.shape)
+                    vblock1 = reorder.reshape((4, 32))
+                    #print(vblock1)
+                    for i1 in range(4):
+                        #print(vblock1[i])
+                        W = np.concatenate([W, vblock1[i1]])
+                    res = []
+                
+            #print("nb_nonzero", nb_nonzero)
+        
+        for i2 in range(int(len(res)/32)):
+            W = np.concatenate([W, res[i2*32:(i2+1)*32]])
+        
+        
+        #print(idx)
+        #break
         idx[pos] = nb_nonzero
+        #print(idx)
+        #if i>3:
+        #    break
     f.write('#ifdef DOT_PROD\n')
     printVector(f, W, name, dtype='qweight')
     f.write('#else /*DOT_PROD*/\n')
