@@ -35,7 +35,7 @@
 #include <immintrin.h>
 
 /* Use 8-bit dot products unless disabled or if stuck with SSE2. */
-#if (defined(__AVX2__) || defined(__SSSE3__)) && !defined(DISABLE_DOT_PROD)
+#if (defined(__AVX2__) || defined(__SSSE3__) || defined(__AVX512__)) && !defined(DISABLE_DOT_PROD)
 #define DOT_PROD
 #define USE_SU_BIAS
 
