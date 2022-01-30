@@ -36,6 +36,7 @@
 #define ACTIVATION_TANH    2
 #define ACTIVATION_RELU    3
 #define ACTIVATION_SOFTMAX 4
+#define ACTIVATION_SWISH   5
 
 typedef struct {
   const float *bias;
@@ -95,7 +96,7 @@ typedef struct {
 
 void compute_activation(float *output, const float *input, int N, int activation);
 
-void compute_dense(const DenseLayer *layer, float *output, const float *input);
+void _lpcnet_compute_dense(const DenseLayer *layer, float *output, const float *input);
 
 void compute_mdense(const MDenseLayer *layer, float *output, const float *input);
 
